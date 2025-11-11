@@ -2,6 +2,7 @@ package com.example.kvdb.engine;
 
 import com.example.kvdb.api.PersistenceManager;
 import com.example.kvdb.api.TableOptions;
+import com.example.kvdb.core.InMemoryKeyValueStore;
 import java.io.File;
 import java.io.RandomAccessFile;
 import java.io.IOException;
@@ -26,19 +27,19 @@ class ArkashaPersistenceManager implements PersistenceManager {
             List<String> tableNames = engine.getAllTableNames();
             raf.writeInt(tableNames.size());
             for (String tableName : tableNames) {
-                DistributedTable table = engine.getStore(tableName);
+                InMemoryKeyValueStore store = engine.getStore(tableName);
                 byte[] nameBytes = tableName.getBytes(StandardCharsets.UTF_8);
                 raf.writeInt(nameBytes.length);
                 raf.write(nameBytes);
-                TableOptions options = table.getMasterOptions();
+                TableOptions options = store.getOptions();
                 raf.writeBoolean(options.isWalEnabled());
                 raf.writeBoolean(options.isFsync());
                 raf.writeInt(options.getMaxValueSize());
-                List<String> keys = table.keys();
+                List<String> keys = store.keys();
                 raf.writeInt(keys.size());
                 for (String key : keys) {
                     byte[] keyBytes = key.getBytes(StandardCharsets.UTF_8);
-                    byte[] value = table.get(key);
+                    byte[] value = store.get(key);
                     int valueLength = (value != null ? value.length : 0);
                     raf.writeInt(keyBytes.length);
                     raf.write(keyBytes);
@@ -85,7 +86,7 @@ class ArkashaPersistenceManager implements PersistenceManager {
                 int maxValueSize = raf.readInt();
                 TableOptions options = new TableOptions(walEnabled, fsync, maxValueSize);
                 engine.createTable(tableName, options);
-                DistributedTable table = engine.getStore(tableName);
+                InMemoryKeyValueStore store = engine.getStore(tableName);
                 int entryCount = raf.readInt();
                 for (int j = 0; j < entryCount; j++) {
                     int keyLen = raf.readInt();
@@ -97,7 +98,7 @@ class ArkashaPersistenceManager implements PersistenceManager {
                     if (valueLen > 0) {
                         raf.readFully(value);
                     }
-                    table.put(key, value);
+                    store.put(key, value);
                 }
             }
         } catch (IOException e) {

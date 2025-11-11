@@ -1,6 +1,7 @@
 package com.example.kvdb.engine;
 
 import com.example.kvdb.api.*;
+import com.example.kvdb.core.InMemoryKeyValueStore;
 import com.example.kvdb.core.TableImpl;
 import com.example.kvdb.util.Serializer;
 import java.io.File;
@@ -14,10 +15,8 @@ public class ArkashaEngine implements StorageEngine, TableRegistry, Distributed 
     private final ArkashaMetrics metrics;
     private final ArkashaPersistenceManager persistenceManager;
     private final ArkashaWriteAheadLog writeAheadLog;
-    private final Map<String, DistributedTable> tables;
+    private final Map<String, InMemoryKeyValueStore> tables;
     private final Map<String, Serializer<?>> serializers;
-    private final ConsistentHashRing hashRing;
-    private final Map<String, ClusterNode> clusterNodes;
     private boolean closed = false;
 
     public ArkashaEngine(DatabaseConfig config) {
@@ -28,9 +27,6 @@ public class ArkashaEngine implements StorageEngine, TableRegistry, Distributed 
         this.metrics = new ArkashaMetrics();
         this.tables = new HashMap<>();
         this.serializers = new HashMap<>();
-        this.clusterNodes = new HashMap<>();
-        this.hashRing = new ConsistentHashRing(128);
-        initializeDefaultCluster();
         File dataDir = new File(config.getDataPath());
         dataDir.mkdirs();
         this.writeAheadLog = new ArkashaWriteAheadLog(this, new File(dataDir, "arkasha.wal"));
@@ -42,18 +38,6 @@ public class ArkashaEngine implements StorageEngine, TableRegistry, Distributed 
         if (replayed > 0) {
             persistenceManager.flush();
         }
-    }
-
-    private ClusterNode registerNode(String nodeId, ClusterNode.Role role) {
-        ClusterNode node = new ClusterNode(nodeId, role);
-        clusterNodes.put(nodeId, node);
-        return node;
-    }
-
-    private void initializeDefaultCluster() {
-        ClusterNode master = registerNode("node-0-master", ClusterNode.Role.MASTER);
-        ClusterNode slave = registerNode("node-0-slave", ClusterNode.Role.SLAVE);
-        hashRing.addGroup(new MasterSlaveGroup(master, List.of(slave)));
     }
 
     @Override
@@ -70,8 +54,8 @@ public class ArkashaEngine implements StorageEngine, TableRegistry, Distributed 
         if (options == null) {
             options = new TableOptions();
         }
-        DistributedTable table = new DistributedTable(name, options, hashRing, writeAheadLog, metrics);
-        tables.put(name, table);
+        InMemoryKeyValueStore store = new InMemoryKeyValueStore(name, options, writeAheadLog, metrics);
+        tables.put(name, store);
     }
 
     @Override
@@ -79,11 +63,11 @@ public class ArkashaEngine implements StorageEngine, TableRegistry, Distributed 
         if (closed) {
             throw new IllegalStateException("Database is closed");
         }
-        DistributedTable table = tables.get(name);
-        if (table == null) {
+        InMemoryKeyValueStore store = tables.get(name);
+        if (store == null) {
             throw new IllegalArgumentException("Table '" + name + "' not found");
         }
-        return table;
+        return store;
     }
 
     @Override
@@ -91,12 +75,26 @@ public class ArkashaEngine implements StorageEngine, TableRegistry, Distributed 
         if (closed) {
             throw new IllegalStateException("Database is closed");
         }
-        DistributedTable table = tables.remove(name);
-        serializers.remove(name);
-        if (table == null) {
+        InMemoryKeyValueStore store = tables.remove(name);
+        if (store == null) {
             throw new IllegalArgumentException("Table '" + name + "' not found");
         }
-        table.dropFromCluster();
+        // Calculate total keys and bytes from the removed table to update metrics
+        List<String> keys = store.keys();
+        long keyCount = 0;
+        long bytes = 0;
+        for (String key : keys) {
+            byte[] value = store.get(key);
+            if (value != null) {
+                keyCount++;
+                bytes += (key.getBytes(java.nio.charset.StandardCharsets.UTF_8).length + value.length);
+            }
+        }
+        if (keyCount > 0) {
+            metrics.decrementKeyCount(keyCount);
+            metrics.addDataSize(-bytes);
+        }
+        store.clearData();
     }
 
     @Override
@@ -174,37 +172,13 @@ public class ArkashaEngine implements StorageEngine, TableRegistry, Distributed 
 
     @Override
     public void replicate(String tableName, String key, byte[] value) {
-        DistributedTable table = tables.get(tableName);
-        if (table == null) {
-            throw new IllegalArgumentException("Table '" + tableName + "' not found");
-        }
-        table.replicateToSlavesOnly(key, value);
     }
 
     @Override
     public void addNode(String nodeId) {
-        if (closed) {
-            throw new IllegalStateException("Database is closed");
-        }
-        if (nodeId == null || nodeId.isEmpty()) {
-            throw new IllegalArgumentException("Node identifier must not be null or empty");
-        }
-        String masterId = nodeId + "-master";
-        String slaveId = nodeId + "-slave";
-        if (clusterNodes.containsKey(masterId) || clusterNodes.containsKey(slaveId)) {
-            throw new IllegalArgumentException("Cluster already contains node with id '" + nodeId + "'");
-        }
-        ClusterNode master = registerNode(masterId, ClusterNode.Role.MASTER);
-        ClusterNode slave = registerNode(slaveId, ClusterNode.Role.SLAVE);
-        MasterSlaveGroup group = new MasterSlaveGroup(master, List.of(slave));
-        hashRing.addGroup(group);
-        for (DistributedTable table : tables.values()) {
-            table.registerGroup(group);
-            table.rebalance();
-        }
     }
 
-    DistributedTable getStore(String tableName) {
+    InMemoryKeyValueStore getStore(String tableName) {
         return tables.get(tableName);
     }
 
@@ -213,38 +187,7 @@ public class ArkashaEngine implements StorageEngine, TableRegistry, Distributed 
     }
 
     TableOptions getTableOptions(String tableName) {
-        DistributedTable table = tables.get(tableName);
-        return (table != null ? table.getMasterOptions() : null);
-    }
-
-    public synchronized byte[] readFromNode(String tableName, String nodeId, String key) {
-        DistributedTable table = tables.get(tableName);
-        ClusterNode node = clusterNodes.get(nodeId);
-        if (table == null || node == null) {
-            return null;
-        }
-        return table.readFromNode(node, key);
-    }
-
-    public synchronized List<String> getNodeKeys(String tableName, String nodeId) {
-        DistributedTable table = tables.get(tableName);
-        ClusterNode node = clusterNodes.get(nodeId);
-        if (table == null || node == null) {
-            return List.of();
-        }
-        return table.keysOnNode(node);
-    }
-
-    public synchronized String locateMasterNode(String tableName, String key) {
-        return hashRing.locate(tableName + "::" + key).getMaster().getId();
-    }
-
-    @Override
-    public synchronized Distributed.TableClusterStatus describeTableCluster(String tableName) {
-        DistributedTable table = tables.get(tableName);
-        if (table == null) {
-            throw new IllegalArgumentException("Table '" + tableName + "' not found");
-        }
-        return new Distributed.TableClusterStatus(tableName, table.describeShards());
+        InMemoryKeyValueStore store = tables.get(tableName);
+        return (store != null ? store.getOptions() : null);
     }
 }

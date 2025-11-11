@@ -1,4 +1,5 @@
 package com.example.kvdb.engine;
+import com.example.kvdb.core.InMemoryKeyValueStore;
 
 import com.example.kvdb.api.WriteAheadLog;
 import com.example.kvdb.api.TableOptions;
@@ -96,23 +97,23 @@ public class ArkashaWriteAheadLog implements WriteAheadLog {
                     if (engine.getTableOptions(tableName) == null) {
                         engine.createTable(tableName, new TableOptions(true, false, -1));
                     }
-                    DistributedTable table = engine.getStore(tableName);
+                    InMemoryKeyValueStore store = engine.getStore(tableName);
                     boolean wasActive = isActive();
                     if (wasActive) {
                         setActive(false);
                     }
-                    table.put(key, valueBytes);
+                    store.put(key, valueBytes);
                     if (wasActive) {
                         setActive(true);
                     }
                 } else if (op == 2) { // DELETE
                     if (engine.getTableOptions(tableName) != null) {
-                        DistributedTable table = engine.getStore(tableName);
+                        InMemoryKeyValueStore store = engine.getStore(tableName);
                         boolean wasActive = isActive();
                         if (wasActive) {
                             setActive(false);
                         }
-                        table.delete(key);
+                        store.delete(key);
                         if (wasActive) {
                             setActive(true);
                         }
