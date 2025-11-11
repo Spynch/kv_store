@@ -1,5 +1,6 @@
 package com.example.kvdb.apihttp;
 
+import com.example.kvdb.api.Distributed;
 import com.example.kvdb.api.KeyValueStore;
 import com.example.kvdb.api.StorageEngine;
 import com.example.kvdb.api.TableOptions;
@@ -136,11 +137,27 @@ public class DatabaseController {
             if (table instanceof com.example.kvdb.core.InMemoryKeyValueStore memStore) {
                 List<String> keys = memStore.keys();
                 return ResponseEntity.ok(keys);
+            } else if (table instanceof com.example.kvdb.engine.DistributedTable distributedTable) {
+                List<String> keys = distributedTable.keys();
+                return ResponseEntity.ok(keys);
             } else {
                 return ResponseEntity.ok("Listing keys not supported for this engine");
             }
         } catch (IllegalArgumentException e) {
             return ResponseEntity.status(404).body("Table not found: " + tableName);
         }
+    }
+
+    @GetMapping("/tables/{tableName}/cluster")
+    public ResponseEntity<?> getClusterStatus(@PathVariable String tableName) {
+        if (db instanceof Distributed distributed) {
+            try {
+                Distributed.TableClusterStatus status = distributed.describeTableCluster(tableName);
+                return ResponseEntity.ok(status);
+            } catch (IllegalArgumentException e) {
+                return ResponseEntity.status(404).body("Table not found: " + tableName);
+            }
+        }
+        return ResponseEntity.status(501).body("Cluster status introspection not supported");
     }
 }
