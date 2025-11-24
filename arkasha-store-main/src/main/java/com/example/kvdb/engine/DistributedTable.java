@@ -222,13 +222,14 @@ class DistributedTable implements KeyValueStore<byte[]> {
 
     synchronized List<Distributed.ShardStatus> describeShards() {
         List<Distributed.ShardStatus> shards = new ArrayList<>();
-        for (MasterSlaveGroup group : hashRing.getGroups()) {
+        for (MasterSlaveGroup group : hashRing.getAllGroups()) {
             Distributed.NodeStatus master = describeNode(group.getMaster());
             List<Distributed.NodeStatus> replicas = new ArrayList<>();
             for (ClusterNode slave : group.getSlaves()) {
                 replicas.add(describeNode(slave));
             }
-            shards.add(new Distributed.ShardStatus(group.getMaster().getId(), master, replicas));
+            String status = hashRing.shardState(group.getMaster().getId()).name().toLowerCase(Locale.ROOT);
+            shards.add(new Distributed.ShardStatus(group.getMaster().getId(), status, master, replicas));
         }
         return shards;
     }

@@ -13,9 +13,13 @@ class ConsistentHashRing {
     private final SortedMap<Integer, MasterSlaveGroup> ring = new TreeMap<>();
     private final Map<String, MasterSlaveGroup> groupsById = new ConcurrentHashMap<>();
     private final int virtualNodes;
+    private final ShardGossipProtocol gossipProtocol;
+    private volatile SortedMap<Integer, MasterSlaveGroup> activeRing = new TreeMap<>();
 
-    ConsistentHashRing(int virtualNodes) {
+    ConsistentHashRing(int virtualNodes, ShardGossipProtocol gossipProtocol) {
         this.virtualNodes = Math.max(1, virtualNodes);
+        this.gossipProtocol = gossipProtocol;
+        gossipProtocol.addStatusListener(this::rebuildActiveRing);
     }
 
     synchronized void addGroup(MasterSlaveGroup group) {
@@ -28,20 +32,56 @@ class ConsistentHashRing {
             int hash = hash(masterId + "#" + i);
             ring.put(hash, group);
         }
+        gossipProtocol.registerShard(masterId);
+        rebuildActiveRing();
     }
 
     synchronized MasterSlaveGroup locate(String key) {
-        if (ring.isEmpty()) {
+        if (activeRing.isEmpty()) {
+            rebuildActiveRing();
+        }
+        if (activeRing.isEmpty()) {
             throw new IllegalStateException("No nodes registered in the hash ring");
         }
         int hash = hash(key);
-        SortedMap<Integer, MasterSlaveGroup> tail = ring.tailMap(hash);
-        Integer nodeHash = tail.isEmpty() ? ring.firstKey() : tail.firstKey();
-        return ring.get(nodeHash);
+        SortedMap<Integer, MasterSlaveGroup> tail = activeRing.tailMap(hash);
+        Integer nodeHash = tail.isEmpty() ? activeRing.firstKey() : tail.firstKey();
+        return activeRing.get(nodeHash);
     }
 
     synchronized List<MasterSlaveGroup> getGroups() {
+        return new ArrayList<>(new LinkedHashSet<>(activeRing.values()));
+    }
+
+    synchronized List<MasterSlaveGroup> getAllGroups() {
         return new ArrayList<>(new LinkedHashSet<>(ring.values()));
+    }
+
+    synchronized List<String> getActiveShardIds() {
+        List<String> ids = new ArrayList<>();
+        for (MasterSlaveGroup group : new LinkedHashSet<>(activeRing.values())) {
+            ids.add(group.getMaster().getId());
+        }
+        return ids;
+    }
+
+    synchronized ShardGossipProtocol.ShardState shardState(String shardId) {
+        return gossipProtocol.shardState(shardId);
+    }
+
+    synchronized void rebuildActiveRing() {
+        TreeMap<Integer, MasterSlaveGroup> nextRing = new TreeMap<>();
+        for (MasterSlaveGroup group : new LinkedHashSet<>(ring.values())) {
+            String masterId = group.getMaster().getId();
+            if (!gossipProtocol.isShardAvailable(masterId)) {
+                continue;
+            }
+            for (int i = 0; i < virtualNodes; i++) {
+                int hash = hash(masterId + "#" + i);
+                nextRing.put(hash, group);
+            }
+        }
+        activeRing = nextRing;
     }
 
     private int hash(String key) {

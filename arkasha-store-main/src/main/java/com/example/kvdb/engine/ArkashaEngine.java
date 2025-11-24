@@ -20,6 +20,7 @@ public class ArkashaEngine implements StorageEngine, TableRegistry, Distributed 
     private final Map<String, DistributedTable> tables;
     private final Map<String, Serializer<?>> serializers;
     private final Map<String, ClusterNode> nodeRegistry;
+    private final ShardGossipProtocol gossipProtocol;
     private final ConsistentHashRing hashRing;
     private boolean closed = false;
 
@@ -32,7 +33,8 @@ public class ArkashaEngine implements StorageEngine, TableRegistry, Distributed 
         this.tables = new HashMap<>();
         this.serializers = new HashMap<>();
         this.nodeRegistry = new HashMap<>();
-        this.hashRing = new ConsistentHashRing(DEFAULT_VIRTUAL_NODES);
+        this.gossipProtocol = new ShardGossipProtocol();
+        this.hashRing = new ConsistentHashRing(DEFAULT_VIRTUAL_NODES, gossipProtocol);
         File dataDir = new File(config.getDataPath());
         dataDir.mkdirs();
         this.writeAheadLog = new ArkashaWriteAheadLog(this, new File(dataDir, "arkasha.wal"));
@@ -216,6 +218,19 @@ public class ArkashaEngine implements StorageEngine, TableRegistry, Distributed 
             throw new IllegalArgumentException("Table '" + tableName + "' not found");
         }
         return table.locateMasterForKey(key).getId();
+    }
+
+    public void updateShardState(String shardId, ShardGossipProtocol.ShardState state) {
+        gossipProtocol.heartbeat(shardId, state);
+        gossipProtocol.gossipRound();
+    }
+
+    public void gossipRound() {
+        gossipProtocol.gossipRound();
+    }
+
+    public List<String> getActiveShards() {
+        return hashRing.getActiveShardIds();
     }
 
     @Override
