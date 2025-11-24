@@ -13,7 +13,7 @@ public interface Distributed {
 
     record TableClusterStatus(String tableName, List<ShardStatus> shards) {}
 
-    record ShardStatus(String shardId, NodeStatus master, List<NodeStatus> replicas) {}
+    record ShardStatus(String shardId, String status, NodeStatus master, List<NodeStatus> replicas) {}
 
     record NodeStatus(String nodeId, String role, int keyCount, List<String> keys) {}
 }
