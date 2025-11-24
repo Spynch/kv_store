@@ -1,0 +1,173 @@
+{
+  "info": {
+    "_postman_id": "9a43b01b-22ef-42b3-9b6d-41caa8adfe55",
+    "name": "KV-DB REST API",
+    "description": "Полный тест CRUD и batch операций для учебной Key-Value базы",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1. PUT один ключ",
+      "request": {
+        "method": "PUT",
+        "header": [
+          {"key": "Content-Type", "value": "text/plain"}
+        ],
+        "body": {"mode": "raw", "raw": "v1"},
+        "url": {
+          "raw": "http://localhost:8080/api/tables/test/keys/k1",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "8080",
+          "path": ["api", "tables", "test", "keys", "k1"]
+        }
+      }
+    },
+    {
+      "name": "2. GET один ключ",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "http://localhost:8080/api/tables/test/keys/k1",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "8080",
+          "path": ["api", "tables", "test", "keys", "k1"]
+        }
+      }
+    },
+    {
+      "name": "3. PUT несколько ключей (items)",
+      "request": {
+        "method": "PUT",
+        "header": [
+          {"key": "Content-Type", "value": "application/json"}
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"items\": {\"a\": \"1\", \"b\": \"2\", \"c\": \"3\"}\n}"
+        },
+        "url": {
+          "raw": "http://localhost:8080/api/tables/test/items",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "8080",
+          "path": ["api", "tables", "test", "items"]
+        }
+      }
+    },
+    {
+      "name": "4. GET несколько ключей",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "http://localhost:8080/api/tables/test/items?key=a&key=b&key=c",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "8080",
+          "path": ["api", "tables", "test", "items"],
+          "query": [
+            {"key": "key", "value": "a"},
+            {"key": "key", "value": "b"},
+            {"key": "key", "value": "c"}
+          ]
+        }
+      }
+    },
+    {
+      "name": "5. PUT обновить несколько ключей",
+      "request": {
+        "method": "PUT",
+        "header": [
+          {"key": "Content-Type", "value": "application/json"}
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"items\": {\"a\": \"11\", \"c\": \"33\"}\n}"
+        },
+        "url": {
+          "raw": "http://localhost:8080/api/tables/test/items",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "8080",
+          "path": ["api", "tables", "test", "items"]
+        }
+      }
+    },
+    {
+      "name": "6. GET после обновления",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "http://localhost:8080/api/tables/test/items?key=a&key=c",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "8080",
+          "path": ["api", "tables", "test", "items"],
+          "query": [
+            {"key": "key", "value": "a"},
+            {"key": "key", "value": "c"}
+          ]
+        }
+      }
+    },
+    {
+      "name": "7. DELETE несколько ключей",
+      "request": {
+        "method": "DELETE",
+        "url": {
+          "raw": "http://localhost:8080/api/tables/test/items?key=a&key=b&key=c&key=k1",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "8080",
+          "path": ["api", "tables", "test", "items"],
+          "query": [
+            {"key": "key", "value": "a"},
+            {"key": "key", "value": "b"},
+            {"key": "key", "value": "c"},
+            {"key": "key", "value": "k1"}
+          ]
+        }
+      }
+    },
+    {
+      "name": "8. GET проверка после удаления",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "http://localhost:8080/api/tables/test/items?key=a&key=b&key=c&key=k1",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "8080",
+          "path": ["api", "tables", "test", "items"],
+          "query": [
+            {"key": "key", "value": "a"},
+            {"key": "key", "value": "b"},
+            {"key": "key", "value": "c"},
+            {"key": "key", "value": "k1"}
+          ]
+        }
+      }
+    },
+    {
+      "name": "9. POST batch операции",
+      "request": {
+        "method": "POST",
+        "header": [
+          {"key": "Content-Type", "value": "application/json"}
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"ops\": [\n    {\"op\": \"put\", \"key\": \"x\", \"value\": \"100\"},\n    {\"op\": \"get\", \"key\": \"x\"},\n    {\"op\": \"delete\", \"key\": \"x\"},\n    {\"op\": \"get\", \"key\": \"x\"}\n  ]\n}"
+        },
+        "url": {
+          "raw": "http://localhost:8080/api/tables/test/batch",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "8080",
+          "path": ["api", "tables", "test", "batch"]
+        }
+      }
+    }
+  ]
+}
