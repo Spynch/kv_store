@@ -239,7 +239,8 @@ class DistributedTable implements KeyValueStore<byte[]> {
                 node.getId(),
                 node.getRole().name().toLowerCase(Locale.ROOT),
                 keys.size(),
-                keys
+                keys,
+                node.getHealthStatus()
         );
     }
 }

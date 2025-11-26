@@ -30,6 +30,19 @@ class ConsistentHashRing {
         }
     }
 
+    synchronized void removeGroup(String masterId) {
+        MasterSlaveGroup group = groupsById.remove(masterId);
+        if (group == null) {
+            return;
+        }
+        ring.entrySet().removeIf(entry -> entry.getValue().equals(group));
+    }
+
+    synchronized void replaceMaster(String failedMasterId, MasterSlaveGroup replacement) {
+        removeGroup(failedMasterId);
+        addGroup(replacement);
+    }
+
     synchronized MasterSlaveGroup locate(String key) {
         if (ring.isEmpty()) {
             throw new IllegalStateException("No nodes registered in the hash ring");

@@ -71,9 +71,32 @@
 
 ---
 
-## Расширения  
-### `Distributed`   
-Методы для будущих возможностей: репликация и шардинг.  
+## Расширения
+### `Distributed`
+Методы для будущих возможностей: репликация и шардинг.
+
+---
+
+## Репликация и шардирование
+
+### Консистентное хеш-кольцо
+* Реализация находится в [`engine/ConsistentHashRing.java`](src/main/java/com/example/kvdb/engine/ConsistentHashRing.java).
+* Каждая master-slave группа представлена несколькими виртуальными узлами в дереве `SortedMap`, что обеспечивает равномерное распределение ключей и минимальные перемещения при добавлении или удалении шардов.
+* Метод [`locate`](src/main/java/com/example/kvdb/engine/ConsistentHashRing.java#L33-L41) вычисляет хеш ключа и возвращает ближайшую группу по часовой стрелке, тем самым распределяя нагрузку по кольцу.
+
+### Master-Slave репликация
+* Группа описана в [`engine/MasterSlaveGroup.java`](src/main/java/com/example/kvdb/engine/MasterSlaveGroup.java); мастер и слейвы хранятся в `ClusterNode`, который лениво создаёт `InMemoryKeyValueStore` для каждой таблицы.
+* Согласованность обеспечивается методом [`replicateToSlaves`](src/main/java/com/example/kvdb/engine/DistributedTable.java#L198-L211): запись сначала выполняется на мастере, затем значение синхронно распространяется на каждый слейв.
+* Удаление данных идёт через [`deleteFromGroup`](src/main/java/com/example/kvdb/engine/DistributedTable.java#L190-L197), который очищает ключи на мастере и всех репликах.
+
+### Обработка запросов таблицы
+* Распределённая таблица реализована в [`engine/DistributedTable.java`](src/main/java/com/example/kvdb/engine/DistributedTable.java).
+* Для любой операции (`put`, `get`, `delete`, `containsKey`) вычисляется группа через [`locateGroup`](src/main/java/com/example/kvdb/engine/DistributedTable.java#L55-L63), после чего используется мастер или слейвы в зависимости от типа операции.
+* При создании новой master-slave группы `ArkashaEngine` регистрирует её с помощью [`registerGroup`](src/main/java/com/example/kvdb/engine/DistributedTable.java#L48-L54), что автоматически подготавливает сторы и подключает шард к таблице.
+
+### Мониторинг шардов и реплик
+* DTO для мониторинга описаны в [`api/Distributed.java`](src/main/java/com/example/kvdb/api/Distributed.java) и включают роль узла, список ключей и статистику по шарду.
+* `ArkashaEngine` строит отчёт о состоянии через [`describeTableCluster`](src/main/java/com/example/kvdb/engine/ArkashaEngine.java#L222-L227), собирая данные по мастерам и репликам, что позволяет наблюдать за распределением и здоровьем кластера.
 
 ---
 

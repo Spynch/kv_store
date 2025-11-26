@@ -17,8 +17,11 @@ class ClusterNode {
     }
 
     private final String id;
-    private final Role role;
+    private volatile Role role;
     private final Map<String, InMemoryKeyValueStore> tables = new ConcurrentHashMap<>();
+    private volatile boolean available = true;
+    private volatile com.example.kvdb.api.Distributed.HealthStatus healthStatus =
+            new com.example.kvdb.api.Distributed.HealthStatus(true, System.currentTimeMillis(), "not checked yet");
 
     ClusterNode(String id, Role role) {
         this.id = id;
@@ -31,6 +34,10 @@ class ClusterNode {
 
     Role getRole() {
         return role;
+    }
+
+    void setRole(Role role) {
+        this.role = role;
     }
 
     InMemoryKeyValueStore getOrCreateStore(String tableName, Supplier<InMemoryKeyValueStore> factory) {
@@ -46,6 +53,22 @@ class ClusterNode {
         if (store != null) {
             store.clearData();
         }
+    }
+
+    boolean isAvailable() {
+        return available;
+    }
+
+    void setAvailable(boolean available) {
+        this.available = available;
+    }
+
+    com.example.kvdb.api.Distributed.HealthStatus getHealthStatus() {
+        return healthStatus;
+    }
+
+    void updateHealthStatus(boolean healthy, String message) {
+        this.healthStatus = new com.example.kvdb.api.Distributed.HealthStatus(healthy, System.currentTimeMillis(), message);
     }
 
     List<String> listKeys(String tableName) {

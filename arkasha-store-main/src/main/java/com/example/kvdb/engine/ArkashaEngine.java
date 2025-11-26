@@ -9,6 +9,9 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 public class ArkashaEngine implements StorageEngine, TableRegistry, Distributed {
     private static final int DEFAULT_VIRTUAL_NODES = 128;
@@ -45,6 +48,7 @@ public class ArkashaEngine implements StorageEngine, TableRegistry, Distributed 
         if (replayed > 0) {
             persistenceManager.flush();
         }
+        healthExecutor.scheduleAtFixedRate(this::safeHealthCheck, 0, 5, TimeUnit.SECONDS);
     }
 
     @Override
@@ -107,6 +111,7 @@ public class ArkashaEngine implements StorageEngine, TableRegistry, Distributed 
             closed = true;
             pm = persistenceManager;
         }
+        healthExecutor.shutdownNow();
         pm.flush();
     }
 
