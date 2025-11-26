@@ -15,7 +15,5 @@ public interface Distributed {
 
     record ShardStatus(String shardId, NodeStatus master, List<NodeStatus> replicas) {}
 
-    record NodeStatus(String nodeId, String role, int keyCount, List<String> keys, HealthStatus health) {}
-
-    record HealthStatus(boolean healthy, long checkedAt, String message) {}
+    record NodeStatus(String nodeId, String role, int keyCount, List<String> keys) {}
 }

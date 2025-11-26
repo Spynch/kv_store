@@ -24,7 +24,6 @@ public class ArkashaEngine implements StorageEngine, TableRegistry, Distributed 
     private final Map<String, Serializer<?>> serializers;
     private final Map<String, ClusterNode> nodeRegistry;
     private final ConsistentHashRing hashRing;
-    private final ScheduledExecutorService healthExecutor;
     private boolean closed = false;
 
     public ArkashaEngine(DatabaseConfig config) {
@@ -37,11 +36,6 @@ public class ArkashaEngine implements StorageEngine, TableRegistry, Distributed 
         this.serializers = new HashMap<>();
         this.nodeRegistry = new HashMap<>();
         this.hashRing = new ConsistentHashRing(DEFAULT_VIRTUAL_NODES);
-        this.healthExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
-            Thread t = new Thread(r, "arkasha-health-monitor");
-            t.setDaemon(true);
-            return t;
-        });
         File dataDir = new File(config.getDataPath());
         dataDir.mkdirs();
         this.writeAheadLog = new ArkashaWriteAheadLog(this, new File(dataDir, "arkasha.wal"));
@@ -231,17 +225,11 @@ public class ArkashaEngine implements StorageEngine, TableRegistry, Distributed 
 
     @Override
     public synchronized TableClusterStatus describeTableCluster(String tableName) {
-        checkClusterHealth();
         DistributedTable table = tables.get(tableName);
         if (table == null) {
             throw new IllegalArgumentException("Table '" + tableName + "' not found");
         }
         return new Distributed.TableClusterStatus(tableName, table.describeShards());
-    }
-
-    public synchronized void markNodeUnavailable(String nodeId) {
-        ClusterNode node = requireNode(nodeId);
-        node.setAvailable(false);
     }
 
     private synchronized void initializeCluster() {
@@ -273,88 +261,6 @@ public class ArkashaEngine implements StorageEngine, TableRegistry, Distributed 
             for (DistributedTable table : tables.values()) {
                 table.rebalance();
             }
-        }
-    }
-
-    private void safeHealthCheck() {
-        try {
-            checkClusterHealth();
-        } catch (Exception ignored) {
-            // Prevent scheduled executor from terminating on unexpected exception
-        }
-    }
-
-    private synchronized void checkClusterHealth() {
-        for (ClusterNode node : nodeRegistry.values()) {
-            probeNode(node);
-        }
-        boolean ringChanged = healUnhealthyMasters();
-        if (ringChanged) {
-            for (DistributedTable table : tables.values()) {
-                table.rebalance();
-            }
-        }
-    }
-
-    private void probeNode(ClusterNode node) {
-        if (!node.isAvailable()) {
-            node.updateHealthStatus(false, "node marked unavailable");
-            return;
-        }
-        try {
-            // Iterate tables to ensure the node can access its stores
-            for (DistributedTable table : tables.values()) {
-                table.keysOnNode(node);
-            }
-            node.updateHealthStatus(true, "healthy");
-        } catch (Exception e) {
-            node.updateHealthStatus(false, e.getMessage());
-        }
-    }
-
-    private boolean healUnhealthyMasters() {
-        boolean changed = false;
-        List<MasterSlaveGroup> groups = new ArrayList<>(hashRing.getGroups());
-        for (MasterSlaveGroup group : groups) {
-            ClusterNode master = group.getMaster();
-            com.example.kvdb.api.Distributed.HealthStatus health = master.getHealthStatus();
-            if (health != null && !health.healthy()) {
-                ClusterNode healthyReplica = findHealthyReplica(group);
-                if (healthyReplica != null) {
-                    promoteReplicaToMaster(group, healthyReplica);
-                } else {
-                    hashRing.removeGroup(master.getId());
-                }
-                changed = true;
-            }
-        }
-        return changed;
-    }
-
-    private ClusterNode findHealthyReplica(MasterSlaveGroup group) {
-        for (ClusterNode slave : group.getSlaves()) {
-            com.example.kvdb.api.Distributed.HealthStatus health = slave.getHealthStatus();
-            if (health != null && health.healthy()) {
-                return slave;
-            }
-        }
-        return null;
-    }
-
-    private void promoteReplicaToMaster(MasterSlaveGroup group, ClusterNode replica) {
-        ClusterNode oldMaster = group.getMaster();
-        oldMaster.setAvailable(false);
-        replica.setRole(ClusterNode.Role.MASTER);
-        List<ClusterNode> newSlaves = new ArrayList<>();
-        for (ClusterNode slave : group.getSlaves()) {
-            if (!slave.getId().equals(replica.getId())) {
-                newSlaves.add(slave);
-            }
-        }
-        MasterSlaveGroup replacement = new MasterSlaveGroup(replica, newSlaves);
-        hashRing.replaceMaster(oldMaster.getId(), replacement);
-        for (DistributedTable table : tables.values()) {
-            table.registerGroup(replacement);
         }
     }
 
