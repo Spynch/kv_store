@@ -56,6 +56,14 @@ class DistributedTable implements KeyValueStore<byte[]> {
         return hashRing.locate(name + "::" + key);
     }
 
+    MasterSlaveGroup locateGroupForKey(String key) {
+        return locateGroup(key);
+    }
+
+    ClusterNode locateMasterForKey(String key) {
+        return locateGroup(key).getMaster();
+    }
+
     private InMemoryKeyValueStore getMasterStore(MasterSlaveGroup group) {
         return group.getMaster().getOrCreateStore(name,
                 () -> new InMemoryKeyValueStore(name, masterOptions, wal, metrics));
@@ -231,7 +239,8 @@ class DistributedTable implements KeyValueStore<byte[]> {
                 node.getId(),
                 node.getRole().name().toLowerCase(Locale.ROOT),
                 keys.size(),
-                keys
+                keys,
+                node.getHealthStatus()
         );
     }
 }
