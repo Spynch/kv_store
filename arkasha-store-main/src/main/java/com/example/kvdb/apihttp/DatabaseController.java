@@ -1,5 +1,6 @@
 package com.example.kvdb.apihttp;
 
+import com.example.kvdb.api.Distributed;
 import com.example.kvdb.api.KeyValueStore;
 import com.example.kvdb.api.StorageEngine;
 import com.example.kvdb.api.TableOptions;
@@ -21,6 +22,14 @@ public class DatabaseController {
 
     public DatabaseController(StorageEngine db) {
         this.db = db;
+    }
+
+
+    private Distributed distributed() {
+        if (db instanceof Distributed d) {
+            return d;
+        }
+        throw new IllegalStateException("Distributed features are not enabled in the current engine");
     }
 
 
@@ -102,6 +111,18 @@ public class DatabaseController {
             }
             return ResponseEntity.ok(Map.of("items", out));
         } catch (IllegalArgumentException e) {
+            return ResponseEntity.status(404).body(Map.of("error", "Table not found", "table", tableName));
+        } catch (Exception ex) {
+            return ResponseEntity.internalServerError().body(Map.of("error", ex.getClass().getSimpleName(), "message", ex.getMessage()));
+        }
+    }
+
+    @GetMapping(path = "/tables/{tableName}/cluster",
+            produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<?> describeTableCluster(@PathVariable String tableName) {
+        try {
+            return ResponseEntity.ok(distributed().describeTableCluster(tableName));
+        } catch (IllegalArgumentException ex) {
             return ResponseEntity.status(404).body(Map.of("error", "Table not found", "table", tableName));
         } catch (Exception ex) {
             return ResponseEntity.internalServerError().body(Map.of("error", ex.getClass().getSimpleName(), "message", ex.getMessage()));
@@ -190,6 +211,37 @@ public class DatabaseController {
             return ResponseEntity.ok(Map.of("results", out.results()));
         } catch (IllegalArgumentException ex) {
             return ResponseEntity.status(404).body(Map.of("error","Table not found","table",tableName));
+        } catch (Exception ex) {
+            return ResponseEntity.internalServerError().body(Map.of("error", ex.getClass().getSimpleName(), "message", ex.getMessage()));
+        }
+    }
+
+    @PostMapping(path = "/cluster/masters/{masterId}/mark-down",
+            produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<?> markMasterDown(@PathVariable String masterId) {
+        try {
+            distributed().markMasterAsUnavailable(masterId);
+            return ResponseEntity.ok(Map.of("status", "marked_down", "masterId", masterId));
+        } catch (Exception ex) {
+            return ResponseEntity.internalServerError().body(Map.of("error", ex.getClass().getSimpleName(), "message", ex.getMessage()));
+        }
+    }
+
+    @PostMapping(path = "/cluster/masters/{masterId}/restore",
+            produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<?> restoreMaster(@PathVariable String masterId) {
+        try {
+            distributed().restoreMaster(masterId);
+            return ResponseEntity.ok(Map.of("status", "restored", "masterId", masterId));
+        } catch (Exception ex) {
+            return ResponseEntity.internalServerError().body(Map.of("error", ex.getClass().getSimpleName(), "message", ex.getMessage()));
+        }
+    }
+
+    @GetMapping(path = "/cluster/health", produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<?> describeClusterHealth() {
+        try {
+            return ResponseEntity.ok(distributed().describeClusterHealth());
         } catch (Exception ex) {
             return ResponseEntity.internalServerError().body(Map.of("error", ex.getClass().getSimpleName(), "message", ex.getMessage()));
         }
