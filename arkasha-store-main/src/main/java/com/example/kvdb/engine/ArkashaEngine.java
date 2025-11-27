@@ -346,14 +346,10 @@ public class ArkashaEngine implements StorageEngine, TableRegistry, Distributed 
 
     private synchronized void handleHealthTransition(String masterId, ClusterNode.HealthState state) {
         boolean ringChanged = false;
-        MasterSlaveGroup group = masterGroups.get(masterId);
-        List<MasterSlaveGroup> extraSources = List.of();
         if (state == ClusterNode.HealthState.DOWN || state == ClusterNode.HealthState.MANUALLY_DISABLED) {
-            if (group != null) {
-                extraSources = List.of(group);
-            }
             ringChanged = hashRing.removeGroup(masterId);
         } else if (state == ClusterNode.HealthState.HEALTHY) {
+            MasterSlaveGroup group = masterGroups.get(masterId);
             if (group != null && !hashRing.containsMaster(masterId)) {
                 hashRing.addGroup(group);
                 for (DistributedTable table : tables.values()) {
@@ -363,17 +359,13 @@ public class ArkashaEngine implements StorageEngine, TableRegistry, Distributed 
             }
         }
         if (ringChanged) {
-            rebalanceTables(extraSources);
+            rebalanceTables();
         }
     }
 
     private synchronized void rebalanceTables() {
-        rebalanceTables(List.of());
-    }
-
-    private synchronized void rebalanceTables(List<MasterSlaveGroup> extraSources) {
         for (DistributedTable table : tables.values()) {
-            table.rebalanceFromSources(extraSources);
+            table.rebalance();
         }
     }
 

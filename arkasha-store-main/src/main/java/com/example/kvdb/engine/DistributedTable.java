@@ -149,12 +149,11 @@ class DistributedTable implements KeyValueStore<byte[]> {
     synchronized void rebalanceFromSources(List<MasterSlaveGroup> additionalSources) {
         Map<String, byte[]> entries = new LinkedHashMap<>();
         List<MasterSlaveGroup> destinations = new ArrayList<>(hashRing.getGroups());
-        pendingSources.addAll(additionalSources);
         if (destinations.isEmpty()) {
             return;
         }
         Set<MasterSlaveGroup> sources = new LinkedHashSet<>(destinations);
-        sources.addAll(pendingSources);
+        sources.addAll(additionalSources);
         for (MasterSlaveGroup group : sources) {
             InMemoryKeyValueStore store = group.getMaster().getStore(name);
             if (store == null) {
