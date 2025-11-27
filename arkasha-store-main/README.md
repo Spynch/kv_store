@@ -71,9 +71,43 @@
 
 ---
 
-## Расширения  
-### `Distributed`   
-Методы для будущих возможностей: репликация и шардинг.  
+## Расширения
+### `Distributed`
+Методы для будущих возможностей: репликация и шардинг.
+
+## HTTP API и проверка мониторинга в Docker
+
+Приложение поднимается как Spring Boot сервис на `8080`. Быстрый запуск локально через Docker Compose:
+
+```bash
+docker compose up --build
+# приложение слушает http://localhost:8080/api
+```
+
+Основные REST-методы распределённого режима:
+
+- `GET /api/cluster/health` — текущий статус мастер-нод (healthy/suspect/down/manually_disabled), последний heartbeat, наличие в кольце и состав кольца.
+- `POST /api/cluster/masters/{masterId}/mark-down` — пометить мастер как нерабочий (исключается из кольца, триггерит ребалансировку).
+- `POST /api/cluster/masters/{masterId}/restore` — снять ручную метку недоступности и вернуть мастер в кольцо, если он здоров.
+- `GET /api/tables/{table}/cluster` — описывает шарды конкретной таблицы (мастер + реплики и список ключей).
+
+Примеры команд внутри хоста (контейнер проброшен на `localhost:8080`):
+
+```bash
+# Проверить, что мониторинг работает
+curl -s http://localhost:8080/api/cluster/health | jq
+
+# Пометить мастер как упавший
+curl -X POST http://localhost:8080/api/cluster/masters/master-1/mark-down
+
+# Вернуть мастер в строй
+curl -X POST http://localhost:8080/api/cluster/masters/master-1/restore
+
+# Посмотреть распределение ключей по шардам таблицы test
+curl -s http://localhost:8080/api/tables/test/cluster | jq
+```
+
+Если сервис работает внутри Docker-сети, обращайтесь к `arkasha:8080` (имя сервиса в `docker-compose.yml`) или пробрасывайте порт на хост, как показано выше.
 
 ---
 
