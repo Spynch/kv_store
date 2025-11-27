@@ -4,14 +4,24 @@ import com.example.kvdb.api.*;
 import com.example.kvdb.core.TableImpl;
 import com.example.kvdb.util.Serializer;
 import java.io.File;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
 public class ArkashaEngine implements StorageEngine, TableRegistry, Distributed {
     private static final int DEFAULT_VIRTUAL_NODES = 128;
+    private static final Duration HEARTBEAT_INTERVAL = Duration.ofSeconds(2);
+    private static final Duration SUSPECT_TIMEOUT = Duration.ofSeconds(5);
+    private static final Duration HEARTBEAT_TIMEOUT = Duration.ofSeconds(8);
 
     private final DatabaseConfig config;
     private final ArkashaMetrics metrics;
@@ -20,7 +30,10 @@ public class ArkashaEngine implements StorageEngine, TableRegistry, Distributed 
     private final Map<String, DistributedTable> tables;
     private final Map<String, Serializer<?>> serializers;
     private final Map<String, ClusterNode> nodeRegistry;
+    private final Map<String, MasterSlaveGroup> masterGroups;
+    private final Map<String, ClusterNode.HealthState> masterHealth;
     private final ConsistentHashRing hashRing;
+    private final ScheduledExecutorService scheduler;
     private boolean closed = false;
 
     public ArkashaEngine(DatabaseConfig config) {
@@ -32,12 +45,20 @@ public class ArkashaEngine implements StorageEngine, TableRegistry, Distributed 
         this.tables = new HashMap<>();
         this.serializers = new HashMap<>();
         this.nodeRegistry = new HashMap<>();
+        this.masterGroups = new HashMap<>();
+        this.masterHealth = new ConcurrentHashMap<>();
         this.hashRing = new ConsistentHashRing(DEFAULT_VIRTUAL_NODES);
+        this.scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "arkasha-health-monitor");
+            t.setDaemon(true);
+            return t;
+        });
         File dataDir = new File(config.getDataPath());
         dataDir.mkdirs();
         this.writeAheadLog = new ArkashaWriteAheadLog(this, new File(dataDir, "arkasha.wal"));
         this.persistenceManager = new ArkashaPersistenceManager(this, new File(dataDir, "arkasha.dat"));
         initializeCluster();
+        startHealthMonitoring();
         writeAheadLog.setActive(false);
         persistenceManager.load();
         int replayed = writeAheadLog.replay(this);
@@ -100,13 +121,16 @@ public class ArkashaEngine implements StorageEngine, TableRegistry, Distributed 
     @Override
     public void close() {
         ArkashaPersistenceManager pm;
+        ScheduledExecutorService monitor;
         synchronized (this) {
             if (closed) {
                 return;
             }
             closed = true;
             pm = persistenceManager;
+            monitor = scheduler;
         }
+        monitor.shutdownNow();
         pm.flush();
     }
 
@@ -227,6 +251,132 @@ public class ArkashaEngine implements StorageEngine, TableRegistry, Distributed 
         return new Distributed.TableClusterStatus(tableName, table.describeShards());
     }
 
+    @Override
+    public synchronized void markMasterAsUnavailable(String masterId) {
+        MasterSlaveGroup group = requireMasterGroup(masterId);
+        ClusterNode master = group.getMaster();
+        master.setManualDisabled(true);
+        ClusterNode.HealthState newState = ClusterNode.HealthState.MANUALLY_DISABLED;
+        masterHealth.put(masterId, newState);
+        handleHealthTransition(masterId, newState);
+    }
+
+    @Override
+    public synchronized void restoreMaster(String masterId) {
+        MasterSlaveGroup group = requireMasterGroup(masterId);
+        ClusterNode master = group.getMaster();
+        master.setManualDisabled(false);
+        ClusterNode.HealthState newState = calculateHealth(master, Instant.now());
+        masterHealth.put(masterId, newState);
+        handleHealthTransition(masterId, newState);
+    }
+
+    @Override
+    public synchronized ClusterHealthStatus describeClusterHealth() {
+        List<Distributed.MasterNodeHealth> masters = new ArrayList<>();
+        for (Map.Entry<String, MasterSlaveGroup> entry : masterGroups.entrySet()) {
+            String masterId = entry.getKey();
+            ClusterNode node = entry.getValue().getMaster();
+            ClusterNode.HealthState state = masterHealth.getOrDefault(masterId, ClusterNode.HealthState.SUSPECT);
+            long lastHeartbeat = node.getLastHeartbeat() == null ? -1L : node.getLastHeartbeat().toEpochMilli();
+            boolean inRing = hashRing.containsMaster(masterId);
+            masters.add(new Distributed.MasterNodeHealth(masterId, state.name().toLowerCase(), lastHeartbeat, inRing, node.isManualDisabled()));
+        }
+        List<String> activeMasters = hashRing.getGroups().stream()
+                .map(group -> group.getMaster().getId())
+                .collect(Collectors.toList());
+        Distributed.RingStatus ring = new Distributed.RingStatus(activeMasters, DEFAULT_VIRTUAL_NODES, activeMasters.size());
+        return new Distributed.ClusterHealthStatus(masters, ring);
+    }
+
+    private void startHealthMonitoring() {
+        scheduler.scheduleAtFixedRate(this::safeHeartbeatTick, 0, HEARTBEAT_INTERVAL.toMillis(), TimeUnit.MILLISECONDS);
+        scheduler.scheduleAtFixedRate(this::safeHealthCheckTick, HEARTBEAT_INTERVAL.toMillis(), HEARTBEAT_INTERVAL.toMillis(), TimeUnit.MILLISECONDS);
+    }
+
+    private void safeHeartbeatTick() {
+        try {
+            heartbeatMasters();
+        } catch (Exception ignored) {
+        }
+    }
+
+    private void safeHealthCheckTick() {
+        try {
+            evaluateMastersHealth();
+        } catch (Exception ignored) {
+        }
+    }
+
+    private synchronized void heartbeatMasters() {
+        for (MasterSlaveGroup group : masterGroups.values()) {
+            ClusterNode master = group.getMaster();
+            if (!master.isManualDisabled()) {
+                master.markHeartbeat();
+            }
+        }
+    }
+
+    private synchronized void evaluateMastersHealth() {
+        Instant now = Instant.now();
+        for (Map.Entry<String, MasterSlaveGroup> entry : masterGroups.entrySet()) {
+            String masterId = entry.getKey();
+            ClusterNode master = entry.getValue().getMaster();
+            ClusterNode.HealthState newState = calculateHealth(master, now);
+            ClusterNode.HealthState previous = masterHealth.put(masterId, newState);
+            if (previous != newState) {
+                handleHealthTransition(masterId, newState);
+            }
+        }
+    }
+
+    private ClusterNode.HealthState calculateHealth(ClusterNode node, Instant now) {
+        if (node.isManualDisabled()) {
+            return ClusterNode.HealthState.MANUALLY_DISABLED;
+        }
+        Duration sinceLast = Duration.between(node.getLastHeartbeat(), now);
+        if (sinceLast.compareTo(HEARTBEAT_TIMEOUT) > 0) {
+            return ClusterNode.HealthState.DOWN;
+        }
+        if (sinceLast.compareTo(SUSPECT_TIMEOUT) > 0) {
+            return ClusterNode.HealthState.SUSPECT;
+        }
+        return ClusterNode.HealthState.HEALTHY;
+    }
+
+    private synchronized void handleHealthTransition(String masterId, ClusterNode.HealthState state) {
+        boolean ringChanged = false;
+        if (state == ClusterNode.HealthState.DOWN || state == ClusterNode.HealthState.MANUALLY_DISABLED) {
+            ringChanged = hashRing.removeGroup(masterId);
+        } else if (state == ClusterNode.HealthState.HEALTHY) {
+            MasterSlaveGroup group = masterGroups.get(masterId);
+            if (group != null && !hashRing.containsMaster(masterId)) {
+                hashRing.addGroup(group);
+                for (DistributedTable table : tables.values()) {
+                    table.registerGroup(group);
+                }
+                ringChanged = true;
+            }
+        }
+        if (ringChanged) {
+            rebalanceTables();
+        }
+    }
+
+    private synchronized void rebalanceTables() {
+        for (DistributedTable table : tables.values()) {
+            table.rebalance();
+        }
+    }
+
+    private synchronized MasterSlaveGroup requireMasterGroup(String masterId) {
+        MasterSlaveGroup group = masterGroups.get(masterId);
+        if (group == null) {
+            throw new IllegalArgumentException("Master node '" + masterId + "' not found");
+        }
+        return group;
+    }
+
     private synchronized void initializeCluster() {
         if (nodeRegistry.isEmpty()) {
             addNodeInternal("node-0", false);
@@ -248,6 +398,9 @@ public class ArkashaEngine implements StorageEngine, TableRegistry, Distributed 
         nodeRegistry.put(masterId, master);
         nodeRegistry.put(slaveId, slave);
         MasterSlaveGroup group = new MasterSlaveGroup(master, Collections.singletonList(slave));
+        masterGroups.put(masterId, group);
+        masterHealth.put(masterId, ClusterNode.HealthState.HEALTHY);
+        master.markHeartbeat();
         hashRing.addGroup(group);
         for (DistributedTable table : tables.values()) {
             table.registerGroup(group);

@@ -30,6 +30,15 @@ class ConsistentHashRing {
         }
     }
 
+    synchronized boolean removeGroup(String masterId) {
+        MasterSlaveGroup group = groupsById.remove(masterId);
+        if (group == null) {
+            return false;
+        }
+        ring.entrySet().removeIf(entry -> entry.getValue().equals(group));
+        return true;
+    }
+
     synchronized MasterSlaveGroup locate(String key) {
         if (ring.isEmpty()) {
             throw new IllegalStateException("No nodes registered in the hash ring");
@@ -42,6 +51,10 @@ class ConsistentHashRing {
 
     synchronized List<MasterSlaveGroup> getGroups() {
         return new ArrayList<>(new LinkedHashSet<>(ring.values()));
+    }
+
+    synchronized boolean containsMaster(String masterId) {
+        return groupsById.containsKey(masterId);
     }
 
     private int hash(String key) {
