@@ -20,6 +20,7 @@ class DistributedTable implements KeyValueStore<byte[]> {
     private final ConsistentHashRing hashRing;
     private final ArkashaWriteAheadLog wal;
     private final ArkashaMetrics metrics;
+    private final Set<MasterSlaveGroup> pendingSources = new LinkedHashSet<>();
 
     DistributedTable(String name,
                      TableOptions options,
@@ -177,6 +178,7 @@ class DistributedTable implements KeyValueStore<byte[]> {
         for (Map.Entry<String, byte[]> entry : entries.entrySet()) {
             put(entry.getKey(), entry.getValue());
         }
+        pendingSources.clear();
     }
 
     synchronized void dropFromCluster() {
