@@ -2,6 +2,7 @@ package com.example.kvdb.engine;
 
 import com.example.kvdb.api.WriteAheadLog;
 import com.example.kvdb.api.TableOptions;
+import com.example.kvdb.api.KeyValueStore;
 
 import java.io.*;
 
@@ -96,7 +97,7 @@ public class ArkashaWriteAheadLog implements WriteAheadLog {
                     if (engine.getTableOptions(tableName) == null) {
                         engine.createTable(tableName, new TableOptions(true, false, -1));
                     }
-                    DistributedTable table = engine.getStore(tableName);
+                    KeyValueStore<byte[]> table = engine.openTable(tableName);
                     boolean wasActive = isActive();
                     if (wasActive) {
                         setActive(false);
@@ -107,7 +108,7 @@ public class ArkashaWriteAheadLog implements WriteAheadLog {
                     }
                 } else if (op == 2) { // DELETE
                     if (engine.getTableOptions(tableName) != null) {
-                        DistributedTable table = engine.getStore(tableName);
+                        KeyValueStore<byte[]> table = engine.openTable(tableName);
                         boolean wasActive = isActive();
                         if (wasActive) {
                             setActive(false);

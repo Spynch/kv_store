@@ -1,6 +1,8 @@
 package com.example.kvdb.api;
 
 
+import java.util.List;
+
 public interface Distributed {
 
     void replicate(String tableName, String key, byte[] value);
@@ -9,29 +11,22 @@ public interface Distributed {
 
     TableClusterStatus describeTableCluster(String tableName);
 
-    record NodeStatus(String nodeId, String role, int keyCount, java.util.List<String> keys) {
-        public NodeStatus {
-            java.util.Objects.requireNonNull(nodeId, "nodeId");
-            java.util.Objects.requireNonNull(role, "role");
-            java.util.Objects.requireNonNull(keys, "keys");
-            keys = java.util.List.copyOf(keys);
-        }
-    }
+    void markMasterAsUnavailable(String masterId);
 
-    record ShardStatus(String shardId, NodeStatus master, java.util.List<NodeStatus> replicas) {
-        public ShardStatus {
-            java.util.Objects.requireNonNull(shardId, "shardId");
-            java.util.Objects.requireNonNull(master, "master");
-            java.util.Objects.requireNonNull(replicas, "replicas");
-            replicas = java.util.List.copyOf(replicas);
-        }
-    }
+    void restoreMaster(String masterId);
 
-    record TableClusterStatus(String tableName, java.util.List<ShardStatus> shards) {
-        public TableClusterStatus {
-            java.util.Objects.requireNonNull(tableName, "tableName");
-            java.util.Objects.requireNonNull(shards, "shards");
-            shards = java.util.List.copyOf(shards);
-        }
-    }
+    ClusterHealthStatus describeClusterHealth();
+
+    record TableClusterStatus(String tableName, List<ShardStatus> shards) {}
+
+    record ShardStatus(String shardId, NodeStatus master, List<NodeStatus> replicas) {}
+
+    record NodeStatus(String nodeId, String role, int keyCount, List<String> keys) {}
+
+    record MasterNodeHealth(String nodeId, String status, long lastHeartbeatMillis,
+                            boolean inRing, boolean manuallyDisabled) {}
+
+    record RingStatus(List<String> activeMasters, int virtualNodes, int ringSize) {}
+
+    record ClusterHealthStatus(List<MasterNodeHealth> masters, RingStatus ring) {}
 }

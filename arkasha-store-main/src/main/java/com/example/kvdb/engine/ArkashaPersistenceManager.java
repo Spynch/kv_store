@@ -1,5 +1,6 @@
 package com.example.kvdb.engine;
 
+import com.example.kvdb.api.KeyValueStore;
 import com.example.kvdb.api.PersistenceManager;
 import com.example.kvdb.api.TableOptions;
 import java.io.File;
@@ -26,7 +27,10 @@ class ArkashaPersistenceManager implements PersistenceManager {
             List<String> tableNames = engine.getAllTableNames();
             raf.writeInt(tableNames.size());
             for (String tableName : tableNames) {
-                DistributedTable table = engine.getStore(tableName);
+                DistributedTable table = engine.getDistributedTable(tableName);
+                if (table == null) {
+                    continue;
+                }
                 byte[] nameBytes = tableName.getBytes(StandardCharsets.UTF_8);
                 raf.writeInt(nameBytes.length);
                 raf.write(nameBytes);
@@ -85,7 +89,7 @@ class ArkashaPersistenceManager implements PersistenceManager {
                 int maxValueSize = raf.readInt();
                 TableOptions options = new TableOptions(walEnabled, fsync, maxValueSize);
                 engine.createTable(tableName, options);
-                DistributedTable table = engine.getStore(tableName);
+                KeyValueStore<byte[]> table = engine.openTable(tableName);
                 int entryCount = raf.readInt();
                 for (int j = 0; j < entryCount; j++) {
                     int keyLen = raf.readInt();

@@ -20,6 +20,7 @@ class DistributedTable implements KeyValueStore<byte[]> {
     private final ConsistentHashRing hashRing;
     private final ArkashaWriteAheadLog wal;
     private final ArkashaMetrics metrics;
+    private final Set<MasterSlaveGroup> pendingSources = new LinkedHashSet<>();
 
     DistributedTable(String name,
                      TableOptions options,
@@ -54,6 +55,14 @@ class DistributedTable implements KeyValueStore<byte[]> {
 
     private MasterSlaveGroup locateGroup(String key) {
         return hashRing.locate(name + "::" + key);
+    }
+
+    MasterSlaveGroup locateGroupForKey(String key) {
+        return locateGroup(key);
+    }
+
+    ClusterNode locateMasterForKey(String key) {
+        return locateGroup(key).getMaster();
     }
 
     private InMemoryKeyValueStore getMasterStore(MasterSlaveGroup group) {
@@ -134,8 +143,18 @@ class DistributedTable implements KeyValueStore<byte[]> {
     }
 
     synchronized void rebalance() {
+        rebalanceFromSources(List.of());
+    }
+
+    synchronized void rebalanceFromSources(List<MasterSlaveGroup> additionalSources) {
         Map<String, byte[]> entries = new LinkedHashMap<>();
-        for (MasterSlaveGroup group : hashRing.getGroups()) {
+        List<MasterSlaveGroup> destinations = new ArrayList<>(hashRing.getGroups());
+        if (destinations.isEmpty()) {
+            return;
+        }
+        Set<MasterSlaveGroup> sources = new LinkedHashSet<>(destinations);
+        sources.addAll(additionalSources);
+        for (MasterSlaveGroup group : sources) {
             InMemoryKeyValueStore store = group.getMaster().getStore(name);
             if (store == null) {
                 continue;
@@ -147,7 +166,7 @@ class DistributedTable implements KeyValueStore<byte[]> {
                 }
             }
         }
-        for (MasterSlaveGroup group : hashRing.getGroups()) {
+        for (MasterSlaveGroup group : sources) {
             InMemoryKeyValueStore store = group.getMaster().getStore(name);
             if (store == null) {
                 continue;
@@ -159,6 +178,7 @@ class DistributedTable implements KeyValueStore<byte[]> {
         for (Map.Entry<String, byte[]> entry : entries.entrySet()) {
             put(entry.getKey(), entry.getValue());
         }
+        pendingSources.clear();
     }
 
     synchronized void dropFromCluster() {
